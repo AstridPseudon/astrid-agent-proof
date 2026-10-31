@@ -1,0 +1,26 @@
+{
+  "attempt": "1",
+  "failing_tests": [],
+  "failing_tests_complete": false,
+  "job_results": {
+    "ci-boundary": "failure",
+    "ci-checks": "failure",
+    "ci-darwin-native": "failure",
+    "ci-release": "failure",
+    "ci-unit": "skipped",
+    "ci-unit-shard": "failure",
+    "ci-windows-native-and-installer": "failure",
+    "lanes-installed": "failure",
+    "lanes-integration": "failure",
+    "lanes-opt-in": "failure",
+    "resolve": "success",
+    "windows-journey-windows-journey": "failure"
+  },
+  "junit_parse_errors": [],
+  "junit_report_count": 0,
+  "ref": "m/candidate-r3",
+  "run_id": "41235628593",
+  "sha": "3bac7302675cce3dc734639c29d1afaef62e1668",
+  "suite": "all",
+  "workflow": "Proof dispatch"
+}
