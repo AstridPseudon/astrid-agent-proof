@@ -1,0 +1,280 @@
+name: V02 CPU install and identity candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Approved common mirror branch
+        required: true
+        type: choice
+        options: [g/integration, m/candidate-r3]
+      agent_sha:
+        description: Exact Agent mirror branch head (40 lowercase hex)
+        required: true
+        type: string
+      runtime_sha:
+        description: Exact Runtime mirror branch head (40 lowercase hex)
+        required: true
+        type: string
+      vibecomfy_sha:
+        description: Exact VibeComfy mirror branch head (40 lowercase hex)
+        required: true
+        type: string
+      installer_sha256:
+        description: Independently reviewed SHA-256 of https://astrid.haus/install
+        required: true
+        type: string
+      manifest_sha256:
+        description: Independently reviewed SHA-256 of https://astrid.haus/install-manifest.json
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  smoke:
+    name: Linux official install and identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Prepare evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/v02-evidence"
+          printf '%s\n' 'setup-missing: lane has not completed' > "$RUNNER_TEMP/v02-evidence/state.txt"
+      - name: Build bundles and exercise installed CLI
+        id: lane
+        shell: bash
+        env:
+          BRANCH: ${{ inputs.branch }}
+          AGENT_SHA: ${{ inputs.agent_sha }}
+          RUNTIME_SHA: ${{ inputs.runtime_sha }}
+          VIBECOMFY_SHA: ${{ inputs.vibecomfy_sha }}
+          INSTALLER_SHA256: ${{ inputs.installer_sha256 }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          EVIDENCE="$RUNNER_TEMP/v02-evidence"
+          ROOT=$(mktemp -d "$RUNNER_TEMP/v02-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXXXX")
+          mkdir -p "$ROOT/home" "$ROOT/tmp" "$ROOT/cache" "$ROOT/bundles" "$ROOT/repos" "$ROOT/manifest"
+          chmod 700 "$ROOT" "$ROOT/home" "$ROOT/tmp"
+          # Only the explicit values below enter the install and probe environment.
+          env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$ROOT/home" TMPDIR="$ROOT/tmp" \
+            XDG_CACHE_HOME="$ROOT/cache" UV_CACHE_DIR="$ROOT/cache/uv" UV_NO_CACHE=1 \
+            GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
+            ROOT="$ROOT" EVIDENCE="$EVIDENCE" BRANCH="$BRANCH" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            AGENT_SHA="$AGENT_SHA" RUNTIME_SHA="$RUNTIME_SHA" VIBECOMFY_SHA="$VIBECOMFY_SHA" \
+            INSTALLER_SHA256="$INSTALLER_SHA256" MANIFEST_SHA256="$MANIFEST_SHA256" \
+            bash --noprofile --norc -s 2>&1 <<'LANE' | tee "$EVIDENCE/lane.log"
+          set -Eeuo pipefail
+          phase=setup
+          trap 'rc=$?; if (( rc != 0 )); then printf "failure: phase=%s exit=%s; see lane.log and installer logs\n" "$phase" "$rc"; if [[ "$phase" == setup ]]; then echo setup-missing > "$EVIDENCE/state.txt"; else echo failure > "$EVIDENCE/state.txt"; fi; fi' EXIT
+          [[ "$GITHUB_REPOSITORY" == AstridPseudon/astrid-agent-proof ]] || { echo "Unexpected dispatcher repository: $GITHUB_REPOSITORY" >&2; exit 1; }
+          for key in AGENT_SHA RUNTIME_SHA VIBECOMFY_SHA; do
+            [[ ${!key} =~ ^[0-9a-f]{40}$ ]] || { echo "$key must be a full lowercase commit SHA" >&2; exit 1; }
+          done
+          for key in INSTALLER_SHA256 MANIFEST_SHA256; do
+            [[ ${!key} =~ ^[0-9a-f]{64}$ ]] || { echo "$key must be a full lowercase SHA-256" >&2; exit 1; }
+          done
+          case "$BRANCH" in g/integration|m/candidate-r3) ;; *) echo 'Unsupported branch' >&2; exit 1;; esac
+          for name in agent runtime vibecomfy; do
+            case "$name" in
+              agent) repo=astrid-agent-proof; sha=$AGENT_SHA ;;
+              runtime) repo=astrid-runtime-proof; sha=$RUNTIME_SHA ;;
+              vibecomfy) repo=vibecomfy-proof; sha=$VIBECOMFY_SHA ;;
+            esac
+            url="https://github.com/AstridPseudon/$repo.git"
+            echo "Resolving $url refs/heads/$BRANCH expected $sha"
+            git init --bare "$ROOT/repos/$name-fetch.git"
+            git -C "$ROOT/repos/$name-fetch.git" fetch --no-tags "$url" "refs/heads/$BRANCH:refs/heads/p15-source"
+            actual=$(git -C "$ROOT/repos/$name-fetch.git" rev-parse 'refs/heads/p15-source^{commit}')
+            [[ "$actual" == "$sha" ]] || { echo "$name branch head mismatch: $actual != $sha" >&2; exit 1; }
+            git -C "$ROOT/repos/$name-fetch.git" bundle create "$ROOT/bundles/$name.bundle" refs/heads/p15-source
+            git -C "$ROOT/repos/$name-fetch.git" bundle verify "$ROOT/bundles/$name.bundle"
+            git clone --bare "$ROOT/bundles/$name.bundle" "$ROOT/repos/$name.git"
+            git -C "$ROOT/repos/$name.git" symbolic-ref HEAD refs/heads/p15-source
+            [[ $(git -C "$ROOT/repos/$name.git" rev-parse 'HEAD^{commit}') == "$sha" ]]
+            git -C "$ROOT/repos/$name.git" archive "$sha" > /dev/null
+            rm -rf "$ROOT/repos/$name-fetch.git"
+            printf '%s %s\n' "$name" "$sha" >> "$EVIDENCE/source-heads.txt"
+            sha256sum "$ROOT/bundles/$name.bundle" >> "$EVIDENCE/bundle-sha256.txt"
+            rm "$ROOT/bundles/$name.bundle"
+          done
+          git -C "$ROOT/repos/agent.git" show "$AGENT_SHA:runtime.lock.json" > "$ROOT/runtime.lock.json"
+          python3 - <<'PY'
+          import json, os
+          lock = json.load(open(os.environ['ROOT'] + '/runtime.lock.json', encoding='utf-8'))
+          if lock.get('source_commit') != os.environ['RUNTIME_SHA']:
+              raise SystemExit('setup: Agent runtime.lock.json does not equal selected Runtime head')
+          PY
+          curl --fail --silent --show-error --location --retry 2 https://astrid.haus/install -o "$ROOT/install.sh"
+          curl --fail --silent --show-error --location --retry 2 https://astrid.haus/install-manifest.json -o "$ROOT/release.json"
+          printf '%s  %s\n%s  %s\n' "$INSTALLER_SHA256" "$ROOT/install.sh" "$MANIFEST_SHA256" "$ROOT/release.json" | sha256sum -c -
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          root = Path(os.environ['ROOT'])
+          manifest = json.loads((root / 'release.json').read_text())
+          script = (root / 'install.sh').read_text()
+          for key, tool in [('UV_VERSION', 'uv'), ('PYTHON_VERSION', 'python')]:
+              version = manifest['tools'][tool]['version']
+              if not re.search(rf'(?m)^{key}={re.escape(version)}$', script):
+                  raise SystemExit(f'setup: installer and manifest disagree on {key}')
+          for name in ('agent', 'runtime', 'vibecomfy'):
+              manifest.setdefault(name, {}).update(sha=os.environ[name.upper() + '_SHA'], repo=str(root / 'repos' / (name + '.git')))
+          (root / 'manifest' / 'local-install-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+          printf 'installer_sha256 %s\nmanifest_sha256 %s\n' "$INSTALLER_SHA256" "$MANIFEST_SHA256" > "$EVIDENCE/installer-sha256.txt"
+          phase=install
+          python3 - <<'PY'
+          import http.server, os, socket, subprocess, threading
+          from functools import partial
+          from pathlib import Path
+          root = Path(os.environ['ROOT'])
+          handler = partial(http.server.SimpleHTTPRequestHandler, directory=str(root / 'manifest'))
+          server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
+          thread = threading.Thread(target=server.serve_forever, daemon=True)
+          thread.start()
+          try:
+              with socket.socket() as sock:
+                  sock.bind(('127.0.0.1', 0))
+                  port = sock.getsockname()[1]
+              env = dict(os.environ, ASTRID_INSTALL_MANIFEST_URL=f'http://127.0.0.1:{server.server_port}/local-install-manifest.json', ASTRID_RUNTIME_DOOR_PORT=str(port), XDG_DATA_HOME=str(root / 'user-data'), UV_PYTHON_INSTALL_DIR=str(root / 'python'))
+              subprocess.run(['sh', str(root / 'install.sh'), '--root', str(root / 'program'), '--data-root', str(root / 'data')], env=env, check=True)
+          finally:
+              server.shutdown()
+              server.server_close()
+              thread.join()
+          PY
+          phase=installed-manifest
+          version=$(cat "$ROOT/program/current")
+          [[ "$version" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo 'invalid installed version' >&2; exit 1; }
+          export PATH="$ROOT/program/versions/$version/py/bin:$ROOT/user-data/astrid/bootstrap:$PATH"
+          export ASTRID_RUNTIME_DATA_ROOT="$ROOT/data"
+          export ASTRID_ENGINE_ROOT="$ROOT/engine"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['ROOT'])
+          version = (root / 'program/current').read_text().strip()
+          manifest = json.loads((root / 'program/versions' / version / 'manifest.json').read_text())
+          for name in ('agent', 'runtime', 'vibecomfy'):
+              if manifest[name]['sha'] != os.environ[name.upper() + '_SHA']:
+                  raise SystemExit(f'installed manifest {name} SHA mismatch')
+          print('Installed manifest records all three selected source heads')
+          PY
+          runtime="$ROOT/program/versions/$version/py/bin/astrid-runtime"
+          [[ -x "$runtime" && -x "$ROOT/program/run-astrid" ]] || { echo 'missing installed Runtime CLI or managed launcher' >&2; exit 1; }
+          phase=workspace
+          "$runtime" workspace inspect --data-root "$ROOT/data" --json > "$EVIDENCE/workspace.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          w = json.loads((Path(os.environ['EVIDENCE']) / 'workspace.json').read_text())
+          root = Path(os.environ['ROOT']) / 'data'
+          if w.get('ok') is not True or w.get('state') != 'configured' or not w.get('realm_id') or not Path(w.get('realm_root', '')).is_relative_to(root):
+              raise SystemExit('workspace is not configured inside the selected data root')
+          PY
+          phase=runtime-identity
+          "$runtime" status --data-root "$ROOT/data" --json > "$ROOT/status.json"
+          "$ROOT/program/versions/$version/py/bin/python" -I - "$ROOT" "$EVIDENCE" <<'PY'
+          import json, sys
+          from pathlib import Path
+          from astrid.installer.core import current
+          from astrid_runtime.runtime_boundary import LocalRuntimeBoundary
+          root, evidence = map(Path, sys.argv[1:])
+          status = json.loads((root / 'status.json').read_text())
+          workspace = json.loads((evidence / 'workspace.json').read_text())
+          discovery = status.get('discovery') or {}
+          instance = discovery.get('runtime_instance_id')
+          health = LocalRuntimeBoundary().owner_startup_identity(endpoint=str(discovery.get('endpoint') or ''), instance_id=str(instance or ''))
+          version = current(root / 'program')
+          expected = {'release': version.release, 'managed_by': version.managed_by}
+          if (not instance or status.get('support', {}).get('healthy') is not True or status.get('support', {}).get('pid_alive') is not True or not isinstance(health, dict) or health.get('status') != 'ok' or health.get('runtime_instance_id') != instance or health.get('identity') != expected or discovery.get('identity') != expected or discovery.get('active_realm') != workspace['realm_id']):
+              raise SystemExit('live Runtime health, installed identity, instance or workspace mismatch')
+          (evidence / 'runtime-identity.json').write_text(json.dumps({'identity': expected, 'runtime_instance_id': instance, 'realm_id': workspace['realm_id'], 'health': 'ok'}, indent=2) + '\n')
+          PY
+          phase=generate-list
+          "$ROOT/program/run-astrid" generate list --json > "$EVIDENCE/generate-list.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          obj = json.loads((Path(os.environ['EVIDENCE']) / 'generate-list.json').read_text())
+          rows = obj if isinstance(obj, list) else obj.get('entries', obj.get('items', []))
+          if sum(isinstance(row, dict) and row.get('id') == 'qwen-image-2.1-turbo' for row in rows) != 1:
+              raise SystemExit('qwen-image-2.1-turbo missing or duplicated in generate list')
+          PY
+          phase=managed-dry-run
+          "$ROOT/program/run-astrid" generate image --entry qwen-image-2.1-turbo --mode t2i --target managed --width 512 --height 512 --dry-run --json 'A small red fox beside a blue ceramic teacup' > "$EVIDENCE/dry-run.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          result = json.loads((Path(os.environ['EVIDENCE']) / 'dry-run.json').read_text())
+          if not isinstance(result, dict) or result.get('entry') != 'qwen-image-2.1-turbo' or result.get('target') != 'managed' or result.get('mode') != 't2i':
+              raise SystemExit('managed dry-run did not return the requested entry, target and mode')
+          PY
+          echo success > "$EVIDENCE/state.txt"
+          echo 'All V02 CPU checks completed.'
+          LANE
+      - name: Collect installer and Runtime logs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          find "$RUNNER_TEMP" -path '*/v02-*/home/.local/state/astrid-runtime/logs/*.log' -type f -exec cp -t "$RUNNER_TEMP/v02-evidence/" {} +
+      - name: Upload evidence and complete lane log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v02-cpu-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/v02-evidence/
+          if-no-files-found: error
+          retention-days: 14
+  summary:
+    if: always()
+    needs: [smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Retrieve lane evidence if available
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: v02-cpu-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/v02-summary-evidence
+      - name: Record conclusion
+        if: always()
+        env:
+          RESULT: ${{ needs.smoke.result }}
+          BRANCH: ${{ inputs.branch }}
+          AGENT_SHA: ${{ inputs.agent_sha }}
+          RUNTIME_SHA: ${{ inputs.runtime_sha }}
+          VIBECOMFY_SHA: ${{ inputs.vibecomfy_sha }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          result = os.environ['RESULT']
+          state_file = Path(os.environ['RUNNER_TEMP']) / 'v02-summary-evidence' / 'state.txt'
+          state = state_file.read_text().strip() if state_file.is_file() else 'missing'
+          if result == 'cancelled':
+              label = 'cancelled'
+          elif result == 'skipped':
+              label = 'setup-missing / skipped'
+          elif result == 'success' and state == 'success':
+              label = 'success'
+          elif state == 'setup-missing':
+              label = 'setup-missing / failed'
+          else:
+              label = 'failed or incomplete'
+
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as out:
+              out.write('## V02 CPU candidate\n\n')
+              out.write(f"Conclusion: **{label}**. Job result: `{result}`; artifact state: `{state}`.\n\n")
+              out.write('Inspect the per-run artifact for state, complete lane log and any installer log. Missing artifact or summary is incomplete evidence, never a pass. Cancellation or runner loss can prevent upload or this summary.\n\n')
+              for key in ('BRANCH', 'AGENT_SHA', 'RUNTIME_SHA', 'VIBECOMFY_SHA'):
+                  value = os.environ[key].replace('`', '').replace('\r', ' ').replace('\n', ' ')
+                  out.write(f'- {key}: `{value}`\n')
+          PY
