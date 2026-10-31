@@ -1,0 +1,848 @@
+# Generated from astrid-agent commit 3bac7302675cce3dc734639c29d1afaef62e1668 .github/workflows; see REPORT.md.
+name: Proof dispatch
+'on':
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Proof branch to test
+        type: string
+        required: true
+        default: m/candidate-r3
+      suite:
+        description: Suite to run
+        type: choice
+        required: true
+        default: ci
+        options:
+        - ci
+        - lanes
+        - windows-journey
+        - all
+permissions:
+  contents: read
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - id: commit
+      name: Record selected commit
+      run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+    - name: Validate inputs
+      env:
+        PROOF_REF: ${{ inputs.ref }}
+        PROOF_SUITE: ${{ inputs.suite }}
+      run: python -c "import os,sys; sys.exit(0 if os.environ['PROOF_REF'] in ['g/integration','h/integration','m/candidate-r3']
+        and os.environ['PROOF_SUITE'] in ['ci', 'lanes', 'windows-journey', 'all'] else 'Unsupported ref or suite
+        for this mirror')"
+  ci-windows-native-and-installer:
+    runs-on: windows-latest
+    env:
+      ASTRID_CI_JOB: windows-native-and-installer
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Verify selected SHA and source workflow
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        test "$(git rev-parse HEAD:.github/workflows/ci.yml)" = "71f285eaa430d22daa90ae51bbbc6ccc4bd86fad"'
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: pip
+        cache-dependency-path: 'pyproject.toml
+
+          requirements/*.lock
+
+          '
+    - name: Install package with dev extras
+      run: python -m pip install -e '.[dev]'
+    - name: Install the pinned Runtime and client
+      run: python scripts/ci_install_runtime.py
+    - name: Check native PowerShell cleanup exit codes
+      run: python -m pytest -q tests/test_installer_windows_tasks.py
+      env:
+        PYTEST_ADDOPTS: --junitxml=proof-junit-0.xml
+    - name: Check Windows pack-host identity and service launcher binding
+      run: python -m pytest -q tests/sdk/test_host_recovery.py tests/test_services.py -k windows
+      env:
+        PYTEST_ADDOPTS: --junitxml=proof-junit-1.xml
+    - name: Check native Windows process and permission behavior
+      run: python -m pytest -q tests/core/execution/test_platform_helpers.py::test_windows_scope_job_kills_descendants_after_leader_exit
+        tests/core/execution/test_platform_helpers.py::test_windows_lock_and_owner_permissions_are_native tests/core/execution/test_platform_helpers.py::test_windows_scope_dies_when_owner_process_exits
+        tests/test_generic_host_child_output.py tests/test_host_child_stdin.py tests/test_windows_child_stdin.py
+        -rP
+      env:
+        PYTEST_ADDOPTS: --junitxml=proof-junit-2.xml
+    - name: Upload JUnit reports
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: proof-junit-ci-windows-native-and-installer-single
+        path: proof-junit-*.xml
+        if-no-files-found: ignore
+    needs:
+    - resolve
+    if: ${{ (inputs.suite == 'ci' || inputs.suite == 'all') && needs.resolve.result == 'success' }}
+  ci-checks:
+    name: fast checks
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Verify selected SHA and source workflow
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        test "$(git rev-parse HEAD:.github/workflows/ci.yml)" = "71f285eaa430d22daa90ae51bbbc6ccc4bd86fad"'
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: pip
+        cache-dependency-path: 'pyproject.toml
+
+          requirements/*.lock
+
+          '
+    - name: Install system media tools
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y ffmpeg
+
+        '
+    - name: Install package with dev extras
+      run: python -m pip install -e '.[dev]'
+    - name: Install the pinned Runtime and client
+      run: python scripts/ci_install_runtime.py
+    - name: Ruff baseline gate
+      run: make ruff
+    - name: Mypy baseline gate
+      run: make mypy
+    - name: Import cycles gate
+      run: make cycles
+    needs:
+    - resolve
+    if: ${{ (inputs.suite == 'ci' || inputs.suite == 'all') && needs.resolve.result == 'success' }}
+  ci-unit-shard:
+    name: unit shard ${{ matrix.group }} / 8 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    env:
+      ASTRID_CI_JOB: unit-shard-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+        group:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Verify selected SHA and source workflow
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        test "$(git rev-parse HEAD:.github/workflows/ci.yml)" = "71f285eaa430d22daa90ae51bbbc6ccc4bd86fad"'
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: pip
+        cache-dependency-path: 'pyproject.toml
+
+          requirements/*.lock
+
+          '
+    - name: Set up Node.js from .node-version
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+    - name: Install system media tools and a system font
+      if: runner.os == 'Linux'
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y ffmpeg fonts-dejavu-core
+
+        '
+      shell: bash
+    - name: Install package with dev extras
+      run: python -m pip install -e '.[dev]'
+    - name: Install the pinned Runtime and client
+      run: python scripts/ci_install_runtime.py
+    - name: Unit tests (default lane shard)
+      run: python -m pytest -q --splits 8 --group ${{ matrix.group }} --durations-path tests/.test_durations --store-durations
+        --clean-durations
+      env:
+        PYTEST_ADDOPTS: --junitxml=proof-junit-0.xml
+    - name: Upload measured test durations
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-durations-${{ matrix.group }}-${{ matrix.os }}
+        path: tests/.test_durations
+        include-hidden-files: true
+        if-no-files-found: error
+    - name: Upload JUnit reports
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: proof-junit-ci-unit-shard-${{ strategy.job-index }}
+        path: proof-junit-*.xml
+        if-no-files-found: ignore
+    needs:
+    - resolve
+    if: ${{ (inputs.suite == 'ci' || inputs.suite == 'all') && needs.resolve.result == 'success' }}
+  ci-unit:
+    name: unit
+    runs-on: ubuntu-latest
+    needs:
+    - resolve
+    - ci-checks
+    - ci-unit-shard
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Verify selected SHA and source workflow
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        test "$(git rev-parse HEAD:.github/workflows/ci.yml)" = "71f285eaa430d22daa90ae51bbbc6ccc4bd86fad"'
+    - name: All unit shards and fast checks passed
+      run: echo "unit passed"
+    if: ${{ (inputs.suite == 'ci' || inputs.suite == 'all') && needs.resolve.result == 'success' }}
+  ci-darwin-native:
+    name: darwin native
+    runs-on: macos-latest
+    env:
+      ASTRID_CI_JOB: darwin-native
+      ASTRID_RUNTIME_CHECKOUT: ${{ github.workspace }}/astrid-runtime
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Verify selected SHA and source workflow
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        test "$(git rev-parse HEAD:.github/workflows/ci.yml)" = "71f285eaa430d22daa90ae51bbbc6ccc4bd86fad"'
+    - name: Read the pinned Runtime commit
+      id: runtime-pin
+      run: echo "commit=$(python3 -c 'import json; print(json.load(open("runtime.lock.json"))["source_commit"])')"
+        >> "$GITHUB_OUTPUT"
+    - name: Check out the Runtime (astrid-runtime)
+      uses: actions/checkout@v4
+      with:
+        repository: banodoco/astrid-runtime
+        ref: ${{ steps.runtime-pin.outputs.commit }}
+        path: astrid-runtime
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: pip
+        cache-dependency-path: 'pyproject.toml
+
+          requirements/*.lock
+
+          '
+    - name: Set up Node.js from .node-version
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+        cache: npm
+        cache-dependency-path: remotion/package-lock.json
+    - name: Install ffmpeg
+      run: brew install ffmpeg
+    - name: Install Remotion dependencies
+      run: npm ci --prefix remotion
+    - name: Install package with dev extras
+      run: python -m pip install -e '.[dev]'
+    - name: Install the Runtime and client from the checkout
+      run: python -m pip install --no-deps -e ./astrid-runtime -e ./astrid-runtime/packages/python
+    - name: Provision the Remotion browser
+      run: npx remotion browser ensure
+      working-directory: remotion
+    - name: Install the Codex CLI (the codex_cli lane starts its native binary in the host sandbox)
+      run: npm install -g @openai/codex@0.163.0
+    - name: Darwin native, Remotion and browser tests
+      run: python -m pytest -q -m "darwin_native or remotion or chrome or codex_cli"
+      env:
+        PYTEST_ADDOPTS: --junitxml=proof-junit-0.xml
+    - name: Upload JUnit reports
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: proof-junit-ci-darwin-native-single
+        path: proof-junit-*.xml
+        if-no-files-found: ignore
+    needs:
+    - resolve
+    if: ${{ (inputs.suite == 'ci' || inputs.suite == 'all') && needs.resolve.result == 'success' }}
+  ci-release:
+    name: release wheel / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+        - '3.11'
+        - '3.12'
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Verify selected SHA and source workflow
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        test "$(git rev-parse HEAD:.github/workflows/ci.yml)" = "71f285eaa430d22daa90ae51bbbc6ccc4bd86fad"'
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install system media tools
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y ffmpeg
+
+        '
+    - name: Install wheel builder
+      run: python -m pip install --disable-pip-version-check --no-input --require-hashes -r requirements/build.lock
+    - name: Build exactly one wheel
+      run: 'python -m build --wheel --no-isolation --outdir dist
+
+        test "$(ls dist/*.whl | wc -l)" -eq 1
+
+        '
+    - name: Install the wheel with the hashed runtime lock only
+      run: 'python -m venv "$RUNNER_TEMP/release-venv"
+
+        "$RUNNER_TEMP/release-venv/bin/python" -m pip install --disable-pip-version-check --no-input --require-hashes
+        -r requirements/runtime.lock
+
+        "$RUNNER_TEMP/release-venv/bin/python" scripts/ci_install_runtime.py
+
+        "$RUNNER_TEMP/release-venv/bin/python" -m pip install --no-deps dist/*.whl
+
+        "$RUNNER_TEMP/release-venv/bin/python" -m pip check
+
+        cd "$RUNNER_TEMP" && "$RUNNER_TEMP/release-venv/bin/python" -c "import astrid"
+
+        '
+    - name: Smoke the installed wheel
+      run: bash scripts/smoke_wheel_install.sh --wheel dist/*.whl --venv "$RUNNER_TEMP/release-venv"
+    - name: Validate locks and record the release toolchain
+      run: python -m scripts.reshape.release_reproducibility --expected-python ${{ matrix.python-version }} --output
+        dist/toolchain.json
+    - name: Upload the wheel and its toolchain record
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-wheel-${{ matrix.python-version }}
+        path: dist/
+    needs:
+    - resolve
+    if: ${{ (inputs.suite == 'ci' || inputs.suite == 'all') && needs.resolve.result == 'success' }}
+  ci-boundary:
+    name: boundary
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Verify selected SHA and source workflow
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        test "$(git rev-parse HEAD:.github/workflows/ci.yml)" = "71f285eaa430d22daa90ae51bbbc6ccc4bd86fad"'
+    - name: Read the pinned Runtime commit
+      id: runtime-pin
+      run: echo "commit=$(python -c 'import json; print(json.load(open("runtime.lock.json"))["source_commit"])')"
+        >> "$GITHUB_OUTPUT"
+    - name: Check out the Runtime (producer)
+      uses: actions/checkout@v4
+      with:
+        repository: banodoco/astrid-runtime
+        ref: ${{ steps.runtime-pin.outputs.commit }}
+        path: runtime-producer
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: All vendored Runtime artifacts match the pinned producer
+      run: python scripts/vendor_lock.py check runtime.lock.json --producer runtime-producer
+    needs:
+    - resolve
+    if: ${{ (inputs.suite == 'ci' || inputs.suite == 'all') && needs.resolve.result == 'success' }}
+  lanes-integration:
+    name: integration shard ${{ matrix.group }} / 4
+    runs-on: ubuntu-latest
+    env:
+      ASTRID_CI_JOB: lanes-integration
+      ASTRID_RUNTIME_CHECKOUT: ${{ github.workspace }}/astrid-runtime
+      ASTRID_VIBECOMFY_CHECKOUT: ${{ github.workspace }}/vibecomfy-checkout
+      ASTRID_PINOKIO_CHECKOUT: ${{ github.workspace }}/astrid-pinokio
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+        - 1
+        - 2
+        - 3
+        - 4
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Verify selected SHA and source workflow
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        test "$(git rev-parse HEAD:.github/workflows/lanes.yml)" = "649cb07edcfef27973db2ef6caf85951d0945772"'
+    - name: Read the pinned Runtime commit
+      id: runtime-pin
+      run: echo "commit=$(python3 -c 'import json; print(json.load(open("runtime.lock.json"))["source_commit"])')"
+        >> "$GITHUB_OUTPUT"
+    - name: Check out the Runtime (astrid-runtime)
+      uses: actions/checkout@v4
+      with:
+        repository: banodoco/astrid-runtime
+        ref: ${{ steps.runtime-pin.outputs.commit }}
+        path: astrid-runtime
+    - name: Check out Pinokio (astrid-pinokio)
+      uses: actions/checkout@v4
+      with:
+        repository: banodoco/astrid-pinokio
+        ref: main
+        path: astrid-pinokio
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: pip
+        cache-dependency-path: 'pyproject.toml
+
+          requirements/*.lock
+
+          '
+    - name: Set up Node.js 22 (HyperFrames CLI)
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - name: Set up Node.js from .node-version
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+    - name: Install system media tools and a system font
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y ffmpeg fonts-dejavu-core
+
+        '
+    - name: Install package with dev extras
+      run: python -m pip install -e '.[dev]'
+    - name: Install the Runtime and client from the checkout
+      run: python -m pip install --no-deps -e ./astrid-runtime -e ./astrid-runtime/packages/python
+    - name: Read the pinned VibeComfy revision
+      id: vibecomfy-pin
+      run: rev=$(python3 scripts/vibecomfy_pin.py) && echo "revision=$rev" >> "$GITHUB_OUTPUT"
+    - name: Check out VibeComfy at the pinned engine revision
+      uses: actions/checkout@v4
+      with:
+        repository: peteromallet/VibeComfy
+        ref: ${{ steps.vibecomfy-pin.outputs.revision }}
+        path: vibecomfy-checkout
+    - name: Install VibeComfy
+      run: python -m pip install -e ./vibecomfy-checkout
+    - name: Install the Remotion dependencies
+      run: 'sudo apt-get install -y libnss3 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libgbm1 libasound2t64 libxrandr2
+        libxkbcommon0 libxfixes3 libxcomposite1 libxdamage1 libpango-1.0-0 libcairo2 libcups2
+
+        npm ci --prefix remotion
+
+        '
+    - name: Provision the Remotion browser
+      run: npx remotion browser ensure
+      working-directory: remotion
+    - name: Integration tests (shard)
+      run: python -m pytest -q -m "integration and not opt_in and not app_checkout" --splits 4 --group ${{ matrix.group
+        }}
+      env:
+        PYTEST_ADDOPTS: --junitxml=proof-junit-0.xml
+    - name: Upload JUnit reports
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: proof-junit-lanes-integration-${{ strategy.job-index }}
+        path: proof-junit-*.xml
+        if-no-files-found: ignore
+    needs:
+    - resolve
+    if: ${{ (inputs.suite == 'lanes' || inputs.suite == 'all') && needs.resolve.result == 'success' }}
+  lanes-opt-in:
+    name: opt-in
+    runs-on: ubuntu-latest
+    env:
+      ASTRID_CI_JOB: lanes-opt-in
+      ASTRID_RUNTIME_CHECKOUT: ${{ github.workspace }}/astrid-runtime
+      ASTRID_VIBECOMFY_CHECKOUT: ${{ github.workspace }}/vibecomfy-checkout
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Verify selected SHA and source workflow
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        test "$(git rev-parse HEAD:.github/workflows/lanes.yml)" = "649cb07edcfef27973db2ef6caf85951d0945772"'
+    - name: Read the pinned Runtime commit
+      id: runtime-pin
+      run: echo "commit=$(python3 -c 'import json; print(json.load(open("runtime.lock.json"))["source_commit"])')"
+        >> "$GITHUB_OUTPUT"
+    - name: Check out the Runtime (astrid-runtime)
+      uses: actions/checkout@v4
+      with:
+        repository: banodoco/astrid-runtime
+        ref: ${{ steps.runtime-pin.outputs.commit }}
+        path: astrid-runtime
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: pip
+        cache-dependency-path: 'pyproject.toml
+
+          requirements/*.lock
+
+          '
+    - name: Set up Node.js 22 (HyperFrames CLI)
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - name: Set up Node.js from .node-version
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+    - name: Install system media tools and a system font
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y ffmpeg fonts-dejavu-core
+
+        '
+    - name: Install package with dev extras
+      run: python -m pip install -e '.[dev]'
+    - name: Install the Runtime and client from the checkout
+      run: python -m pip install --no-deps -e ./astrid-runtime -e ./astrid-runtime/packages/python
+    - name: Read the pinned VibeComfy revision
+      id: vibecomfy-pin
+      run: rev=$(python3 scripts/vibecomfy_pin.py) && echo "revision=$rev" >> "$GITHUB_OUTPUT"
+    - name: Check out VibeComfy at the pinned engine revision
+      uses: actions/checkout@v4
+      with:
+        repository: peteromallet/VibeComfy
+        ref: ${{ steps.vibecomfy-pin.outputs.revision }}
+        path: vibecomfy-checkout
+    - name: Install VibeComfy
+      run: python -m pip install -e ./vibecomfy-checkout
+    - name: Install the Remotion dependencies
+      run: 'sudo apt-get install -y libnss3 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libgbm1 libasound2t64 libxrandr2
+        libxkbcommon0 libxfixes3 libxcomposite1 libxdamage1 libpango-1.0-0 libcairo2 libcups2
+
+        npm ci --prefix remotion
+
+        '
+    - name: Provision the Remotion browser
+      run: npx remotion browser ensure
+      working-directory: remotion
+    - name: Opt-in tests
+      run: python -m pytest -q -m opt_in
+      env:
+        PYTEST_ADDOPTS: --junitxml=proof-junit-0.xml
+    - name: Upload JUnit reports
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: proof-junit-lanes-opt-in-single
+        path: proof-junit-*.xml
+        if-no-files-found: ignore
+    needs:
+    - resolve
+    if: ${{ (inputs.suite == 'lanes' || inputs.suite == 'all') && needs.resolve.result == 'success' }}
+  lanes-installed:
+    name: installed wheel
+    runs-on: ubuntu-latest
+    env:
+      ASTRID_CI_JOB: lanes-installed
+      ASTRID_RUNTIME_CHECKOUT: ${{ github.workspace }}/astrid-runtime
+      ASTRID_HOST_EXECUTION_PROFILE: installed
+      ASTRID_REMOTION_PROJECT_DIR: ${{ github.workspace }}/remotion
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Verify selected SHA and source workflow
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        test "$(git rev-parse HEAD:.github/workflows/lanes.yml)" = "649cb07edcfef27973db2ef6caf85951d0945772"'
+    - name: Read the pinned Runtime commit
+      id: runtime-pin
+      run: echo "commit=$(python3 -c 'import json; print(json.load(open("runtime.lock.json"))["source_commit"])')"
+        >> "$GITHUB_OUTPUT"
+    - name: Check out the Runtime (astrid-runtime)
+      uses: actions/checkout@v4
+      with:
+        repository: banodoco/astrid-runtime
+        ref: ${{ steps.runtime-pin.outputs.commit }}
+        path: astrid-runtime
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Set up Node.js from .node-version
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+    - name: Install system media tools
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y ffmpeg
+
+        '
+    - name: Build exactly one wheel
+      run: 'python -m pip install --disable-pip-version-check --no-input --require-hashes -r requirements/build.lock
+
+        python -m build --wheel --no-isolation --outdir dist
+
+        test "$(ls dist/*.whl | wc -l)" -eq 1
+
+        '
+    - name: Install the wheel and the Runtime into a venv
+      run: 'python -m venv "$RUNNER_TEMP/installed-venv"
+
+        "$RUNNER_TEMP/installed-venv/bin/python" -m pip install "$(ls dist/*.whl)[dev]"
+
+        "$RUNNER_TEMP/installed-venv/bin/python" -m pip install --no-deps ./astrid-runtime ./astrid-runtime/packages/python
+
+        '
+    - name: Install the Remotion dependencies
+      run: npm ci --prefix remotion
+    - name: Installed tests
+      run: '"$RUNNER_TEMP/installed-venv/bin/pytest" -q -m installed --import-mode=importlib tests/packs/h3_av/test_character_swap_cpu_boundary.py'
+      env:
+        PYTEST_ADDOPTS: --junitxml=proof-junit-0.xml
+    - name: Upload JUnit reports
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: proof-junit-lanes-installed-single
+        path: proof-junit-*.xml
+        if-no-files-found: ignore
+    needs:
+    - resolve
+    if: ${{ (inputs.suite == 'lanes' || inputs.suite == 'all') && needs.resolve.result == 'success' }}
+  windows-journey-windows-journey:
+    name: Windows task host journey (${{ matrix.installer-shell }})
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        installer-shell:
+        - powershell.exe
+        - pwsh.exe
+    steps:
+    - name: Check out this Agent commit
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Verify selected SHA and source workflow
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+      run: 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+        test "$(git rev-parse HEAD:.github/workflows/windows-journey.yml)" = "537067589ce6c43bd81bd4b9dceaf632395b9131"'
+    - name: Set up the journey driver (not the installed Python)
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Resolve the pinned Runtime commit from the Agent lock
+      id: runtime-ref
+      shell: pwsh
+      run: "$lock = Get-Content runtime.lock.json -Raw | ConvertFrom-Json\n$runtimeRef = $lock.source_commit\nif\
+        \ ($runtimeRef -notmatch '^[0-9a-f]{40}$') {\n  throw \"runtime.lock.json source_commit is not a full commit\
+        \ SHA\"\n}\n\"ref=$runtimeRef\" >> $env:GITHUB_OUTPUT\n"
+    - name: Check out the selected Runtime
+      uses: actions/checkout@v4
+      with:
+        repository: banodoco/astrid-runtime
+        ref: ${{ steps.runtime-ref.outputs.ref }}
+        path: journey-runtime
+    - name: Check out the selected App installer
+      uses: actions/checkout@v4
+      with:
+        repository: banodoco/astrid-app
+        ref: main
+        path: journey-app
+    - name: Install py-spy in the journey driver environment
+      run: python -m pip install py-spy==0.4.2
+    - name: Install with the real App install.ps1 / ${{ matrix.installer-shell }}
+      run: python -u scripts/ci_windows_journey.py install --installer-shell ${{ matrix.installer-shell }}
+    - name: Start Runtime through its installed Scheduled Task
+      run: python -u scripts/ci_windows_journey.py start
+    - name: Wait for health on 127.0.0.1:17340
+      run: python -u scripts/ci_windows_journey.py health
+    - name: Wait for pack-host running and its ready file
+      run: python -u scripts/ci_windows_journey.py host
+    - name: Run an installed-profile SDK invocation through settlement
+      run: python -u scripts/ci_windows_journey.py task
+    - name: Disable Scheduled Task restarts and run Runtime down
+      if: always()
+      run: python -u scripts/ci_windows_journey.py down
+    - name: Verify no Astrid or Runtime processes remain
+      if: always()
+      run: python -u scripts/ci_windows_journey.py stopped
+    - name: Collect install logs, Runtime logs, health and process lists
+      if: always()
+      run: python -u scripts/ci_windows_journey.py collect
+    - name: Upload Windows task host journey evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Windows-task-host-journey-${{ matrix.installer-shell }}
+        path: ${{ runner.temp }}/X5-windows-journey/
+        if-no-files-found: error
+    needs:
+    - resolve
+    if: ${{ (inputs.suite == 'windows-journey' || inputs.suite == 'all') && needs.resolve.result == 'success' }}
+  summary:
+    if: ${{ always() }}
+    needs:
+    - resolve
+    - ci-windows-native-and-installer
+    - ci-checks
+    - ci-unit-shard
+    - ci-unit
+    - ci-darwin-native
+    - ci-release
+    - ci-boundary
+    - lanes-integration
+    - lanes-opt-in
+    - lanes-installed
+    - windows-journey-windows-journey
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+    - name: Download available JUnit reports
+      uses: actions/download-artifact@v4
+      with:
+        pattern: proof-junit-*
+        path: ${{ runner.temp }}/proof-junit
+    - name: Publish result JSON
+      shell: bash
+      env:
+        PROOF_REF: ${{ inputs.ref }}
+        PROOF_SUITE: ${{ inputs.suite }}
+        PROOF_NEEDS: ${{ toJSON(needs) }}
+        PROOF_TOKEN: ${{ github.token }}
+      run: "python <<'PYTHON'\nimport base64, glob, json, os, pathlib, subprocess, tempfile, xml.etree.ElementTree\
+        \ as ET\n\ndef run(*args, **kwargs):\n    return subprocess.run(args, check=True, **kwargs)\n\nrepo = os.environ['GITHUB_REPOSITORY']\n\
+        if repo not in {'AstridPseudon/astrid-agent-proof', 'AstridPseudon/astrid-runtime-proof'}:\n    raise SystemExit('Unexpected\
+        \ repository')\nref = os.environ['PROOF_REF']\nif ref not in {'g/integration', 'h/integration', 'm/candidate-r3'}:\n\
+        \    raise SystemExit('Unexpected ref')\nneeds = json.loads(os.environ['PROOF_NEEDS'])\nresults = {name:\
+        \ data['result'] for name, data in needs.items()}\nsha = needs.get('resolve', {}).get('outputs', {}).get('sha',\
+        \ '')\nreports = sorted(glob.glob(os.path.join(os.environ['RUNNER_TEMP'], 'proof-junit', '**', '*.xml'),\
+        \ recursive=True))\nfailures, parse_errors = set(), []\nfor report in reports:\n    try:\n        root =\
+        \ ET.parse(report).getroot()\n        for case in root.iter():\n            if case.tag.rsplit('}', 1)[-1]\
+        \ == 'testcase' and any(c.tag.rsplit('}', 1)[-1] in ('failure', 'error') for c in case):\n             \
+        \   failures.add('::'.join(x for x in (case.get('classname'), case.get('name')) if x))\n    except (ET.ParseError,\
+        \ OSError):\n        parse_errors.append(os.path.relpath(report, os.environ['RUNNER_TEMP']))\nsummary =\
+        \ {'workflow': os.environ['GITHUB_WORKFLOW'], 'ref': ref, 'sha': sha,\n           'suite': os.environ['PROOF_SUITE'],\
+        \ 'run_id': os.environ['GITHUB_RUN_ID'],\n           'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'job_results':\
+        \ results,\n           'failing_tests': sorted(failures), 'junit_report_count': len(reports),\n        \
+        \   'junit_parse_errors': parse_errors, 'failing_tests_complete': False}\nenv = os.environ.copy()\ntoken\
+        \ = env.pop('PROOF_TOKEN')\nenv.update(GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='http.https://github.com/.extraheader',\n\
+        \           GIT_CONFIG_VALUE_0='AUTHORIZATION: basic ' + base64.b64encode(('x-access-token:' + token).encode()).decode())\n\
+        with tempfile.TemporaryDirectory(prefix='proof-results-') as directory:\n    run('git', 'init', '-q', directory)\n\
+        \    def git(*args, **kwargs):\n        return run('git', '-C', directory, *args, env=env, **kwargs)\n \
+        \   git('config', 'user.name', 'github-actions[bot]')\n    git('config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com')\n\
+        \    git('remote', 'add', 'mirror', 'https://github.com/' + repo + '.git')\n    probe = subprocess.run(['git',\
+        \ '-C', directory, 'ls-remote', '--exit-code', '--heads', 'mirror', 'results'], env=env, stdout=subprocess.DEVNULL)\n\
+        \    if probe.returncode == 0:\n        git('fetch', '-q', 'mirror', 'refs/heads/results')\n        git('checkout',\
+        \ '-q', '-B', 'publish', 'FETCH_HEAD')\n    elif probe.returncode == 2:\n        git('checkout', '-q', '--orphan',\
+        \ 'publish')\n    else:\n        raise SystemExit('Could not inspect results branch')\n    path = pathlib.Path(directory,\
+        \ 'results', ref, os.environ['GITHUB_RUN_ID'] + '.json')\n    path.parent.mkdir(parents=True, exist_ok=True)\n\
+        \    path.write_text(json.dumps(summary, indent=2, sort_keys=True) + '\\n')\n    git('add', str(path.relative_to(directory)))\n\
+        \    git('commit', '-qm', 'Record proof run ' + os.environ['GITHUB_RUN_ID'])\n    for attempt in range(5):\n\
+        \        pushed = subprocess.run(['git', '-C', directory, 'push', '-q', 'mirror', 'HEAD:refs/heads/results'],\
+        \ env=env)\n        if pushed.returncode == 0:\n            break\n        probe = subprocess.run(['git',\
+        \ '-C', directory, 'fetch', '-q', 'mirror', 'refs/heads/results'], env=env)\n        if probe.returncode\
+        \ != 0:\n            raise SystemExit('Could not fetch results after failed push')\n        # --root also\
+        \ handles the first publisher racing to create the branch.\n        ancestor = subprocess.run(['git', '-C',\
+        \ directory, 'merge-base', 'HEAD', 'FETCH_HEAD'], env=env, stdout=subprocess.DEVNULL)\n        if ancestor.returncode\
+        \ == 0:\n            git('rebase', 'FETCH_HEAD')\n        elif ancestor.returncode == 1:\n            git('rebase',\
+        \ '--onto', 'FETCH_HEAD', '--root')\n        else:\n            raise SystemExit('Could not determine results\
+        \ ancestry')\n    else:\n        raise SystemExit('Could not publish results after five attempts')\nPYTHON\n"
