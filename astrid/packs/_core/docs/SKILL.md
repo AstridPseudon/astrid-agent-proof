@@ -56,6 +56,12 @@ developers.
 
 ## Commands for outside agents
 
+The same install line is the first-use path when a Runtime workspace is missing:
+the installer creates the workspace before starting Runtime. If a workspace
+command fails before setup, give the user the OS-specific command above. If
+installation fails, preserve the exact `Details:` log path printed by the
+installer so the failure can be diagnosed.
+
 Synced skills use the absolute path of Astrid's own Python, so their
 commands work from a terminal without changing PATH.
 

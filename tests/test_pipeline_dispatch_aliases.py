@@ -21,6 +21,8 @@ class PipelineDispatchAliasTest(unittest.TestCase):
         # The seven Stage1 families are all documented.
         for family in (
             "projects",
+            "documents",
+            "preferences",
             "timelines",
             "media",
             "tasks",
@@ -29,6 +31,15 @@ class PipelineDispatchAliasTest(unittest.TestCase):
             "backup",
         ):
             self.assertIn(f"python3 -m astrid {family}", help_text)
+        # Public outer verbs implemented by the gateway.
+        for verb in (
+            "install", "status", "auth", "login", "logout", "revoke",
+            "skills", "--agent-context", "dev", "hivemind",
+        ):
+            self.assertIn(f"python3 -m astrid {verb}", help_text)
+        # SDK generation and pack capability names are not gateway commands.
+        for unsupported in ("generate", "engines", "action", "h3"):
+            self.assertNotIn(f"python3 -m astrid {unsupported}", help_text)
         # Removed families must not be documented anywhere.
         for removed in (
             "orchestrators",
