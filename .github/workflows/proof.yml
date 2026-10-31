@@ -269,7 +269,7 @@ jobs:
     - name: Check out the Runtime (astrid-runtime)
       uses: actions/checkout@v4
       with:
-        repository: banodoco/astrid-runtime
+        repository: AstridPseudon/astrid-runtime-proof
         ref: ${{ steps.runtime-pin.outputs.commit }}
         path: astrid-runtime
     - name: Set up Python
@@ -406,7 +406,7 @@ jobs:
     - name: Check out the Runtime (producer)
       uses: actions/checkout@v4
       with:
-        repository: banodoco/astrid-runtime
+        repository: AstridPseudon/astrid-runtime-proof
         ref: ${{ steps.runtime-pin.outputs.commit }}
         path: runtime-producer
     - name: Set up Python
@@ -454,7 +454,7 @@ jobs:
     - name: Check out the Runtime (astrid-runtime)
       uses: actions/checkout@v4
       with:
-        repository: banodoco/astrid-runtime
+        repository: AstridPseudon/astrid-runtime-proof
         ref: ${{ steps.runtime-pin.outputs.commit }}
         path: astrid-runtime
     - name: Check out Pinokio (astrid-pinokio)
@@ -497,7 +497,7 @@ jobs:
     - name: Check out VibeComfy at the pinned engine revision
       uses: actions/checkout@v4
       with:
-        repository: peteromallet/VibeComfy
+        repository: AstridPseudon/vibecomfy-proof
         ref: ${{ steps.vibecomfy-pin.outputs.revision }}
         path: vibecomfy-checkout
     - name: Install VibeComfy
@@ -554,7 +554,7 @@ jobs:
     - name: Check out the Runtime (astrid-runtime)
       uses: actions/checkout@v4
       with:
-        repository: banodoco/astrid-runtime
+        repository: AstridPseudon/astrid-runtime-proof
         ref: ${{ steps.runtime-pin.outputs.commit }}
         path: astrid-runtime
     - name: Set up Python
@@ -591,7 +591,7 @@ jobs:
     - name: Check out VibeComfy at the pinned engine revision
       uses: actions/checkout@v4
       with:
-        repository: peteromallet/VibeComfy
+        repository: AstridPseudon/vibecomfy-proof
         ref: ${{ steps.vibecomfy-pin.outputs.revision }}
         path: vibecomfy-checkout
     - name: Install VibeComfy
@@ -648,7 +648,7 @@ jobs:
     - name: Check out the Runtime (astrid-runtime)
       uses: actions/checkout@v4
       with:
-        repository: banodoco/astrid-runtime
+        repository: AstridPseudon/astrid-runtime-proof
         ref: ${{ steps.runtime-pin.outputs.commit }}
         path: astrid-runtime
     - name: Set up Python
@@ -733,7 +733,7 @@ jobs:
     - name: Check out the selected Runtime
       uses: actions/checkout@v4
       with:
-        repository: banodoco/astrid-runtime
+        repository: AstridPseudon/astrid-runtime-proof
         ref: ${{ steps.runtime-ref.outputs.ref }}
         path: journey-runtime
     - name: Check out the selected App installer
