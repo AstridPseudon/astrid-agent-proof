@@ -1,0 +1,43 @@
+{
+  "attempt": "1",
+  "failing_tests": [
+    "tests.core.execution.test_generic_host_verified_preparation_gr03",
+    "tests.core.generation.backends.test_comfy_model_resolution",
+    "tests.core.generation.backends.test_comfy_target",
+    "tests.core.generation.backends.test_qwen_21_turbo",
+    "tests.core.generation.backends.test_vibecomfy_http_polling",
+    "tests.core.generation.test_engine_endpoint_transport",
+    "tests.core.generation.test_entries",
+    "tests.core.generation.test_entry_description",
+    "tests.core.generation.test_entry_readiness",
+    "tests.packs.runpod.test_https_transport",
+    "tests.scripts.test_pod_held_budget",
+    "tests.scripts.test_pod_jobs",
+    "tests.scripts.test_pod_progress_put",
+    "tests.sdk.test_generation_target",
+    "tests.sdk.test_generation_verified_preparation_gr03",
+    "tests.test_diagnostics_callers"
+  ],
+  "failing_tests_complete": false,
+  "job_results": {
+    "ci-boundary": "success",
+    "ci-checks": "failure",
+    "ci-darwin-native": "failure",
+    "ci-release": "failure",
+    "ci-unit": "cancelled",
+    "ci-unit-shard": "failure",
+    "ci-windows-native-and-installer": "failure",
+    "lanes-installed": "success",
+    "lanes-integration": "failure",
+    "lanes-opt-in": "failure",
+    "resolve": "success",
+    "windows-journey-windows-journey": "success"
+  },
+  "junit_parse_errors": [],
+  "junit_report_count": 8,
+  "ref": "m/candidate-r3",
+  "run_id": "41241008719",
+  "sha": "3bac7302675cce3dc734639c29d1afaef62e1668",
+  "suite": "all",
+  "workflow": "Proof dispatch"
+}
